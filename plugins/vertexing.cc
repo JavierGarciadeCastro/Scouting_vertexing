@@ -5,36 +5,48 @@
 #include "FWCore/Framework/interface/ESHandle.h"
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
+#include "FWCore/Framework/interface/Event.h"
+#include "FWCore/Framework/interface/EventSetup.h"
+#include "FWCore/Framework/interface/MakerMacros.h"
 
 #include "DataFormats/Scouting/interface/Run3ScoutingMuon.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackBase.h"
-#include "RecoVertex/VertexPrimitives/interface/TransientVertex.h"
-#include "RecoVertex/KalmanVertexFit/interface/KalmanVertexFitter.h"
+#include "TrackingTools/TransientTrack/interface/TransientTrackBuilder.h"
+#include "TrackingTools/Records/interface/TransientTrackRecord.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "DataFormats/GeometryVector/interface/GlobalPoint.h"
+#include "RecoVertex/KalmanVertexFit/interface/KalmanVertexFitter.h"
+#include "RecoVertex/VertexPrimitives/interface/TransientVertex.h"
+
 
 
 //Header
 class vertexing : public edm::one::EDAnalyzer<> {
   public:
-    explicit SctParLooper(const edm::ParameterSet&);
+    explicit vertexing(const edm::ParameterSet&);
     ~vertexing() override;
     void beginJob() override;
     void endJob() override;
     void analyze(const edm::Event&, const edm::EventSetup&) override;
 
   private:
+    unsigned int run, lumi, evtn;
+    edm::EDGetTokenT<std::vector<Run3ScoutingMuon>> muTokenScoutingVtx_;
+    edm::ESGetToken<TransientTrackBuilder, TransientTrackRecord> theTransientTrackBuilderToken_;
 };
 
 //Constructor
-vertexing::vertexing(const edm:ParameterSet& iConfig) :
+vertexing::vertexing(const edm::ParameterSet& iConfig) :
+  muTokenScoutingVtx_{consumes<std::vector<Run3ScoutingMuon>>(iConfig.getParameter<edm::InputTag>("ScoutingmuonsVtx"))},
+  theTransientTrackBuilderToken_{esConsumes(edm::ESInputTag("", "TransientTrackBuilder"))}
+  {}
 
 
 //Destructor
-vertexing::~vertexing() = default
+vertexing::~vertexing() = default;
 
 void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup) {
   run = iEvent.id().run();
@@ -44,8 +56,6 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
   edm::Handle<std::vector<Run3ScoutingMuon>> ScoutingmuonsVtx;
   iEvent.getByToken(muTokenScoutingVtx_, ScoutingmuonsVtx);
 
-  TrackBase::CovarianceMatrix cov;
-  cov.setZero();
   std::vector<reco::Track> trackCollection;
 
   const auto& muonCollectionVtx = *ScoutingmuonsVtx;
@@ -53,6 +63,8 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
 
   for (unsigned int iMu = 0; iMu < nMus; ++iMu) {
     const auto& mu = muonCollectionVtx[iMu];
+
+    reco::TrackBase::CovarianceMatrix cov = reco::TrackBase::CovarianceMatrix();
     cov(0,0) = mu.trk_qoverpError()*mu.trk_qoverpError();
     cov(1,1) = mu.trk_lambdaError()*mu.trk_lambdaError();
     cov(2,2) = mu.trk_phiError()*mu.trk_phiError();
@@ -83,6 +95,57 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
     cov(3,4) = mu.trk_dxy_dsz_cov();
     cov(4,3) = mu.trk_dxy_dsz_cov();
 
+    int charge = mu.charge();
+    double chi2 = mu.trk_chi2();
+    double ndof = mu.trk_ndof();
+
+    double px = mu.trk_pt() * std::cos(mu.trk_phi());   //Check this
+    double py = mu.trk_pt() * std::sin(mu.trk_phi());   //Check this
+    double pz = mu.trk_pt() * std::sinh(mu.trk_eta());  //Check this
+
+    reco::TrackBase::Vector momentum(px, py, pz);
+    reco::TrackBase::Point vtx(0., 0., 0.);
+
+    reco::Track track(
+      chi2,
+      ndof,
+      vtx,
+      momentum,
+      charge,
+      cov,
+      reco::TrackBase::undefAlgorithm,
+      reco::TrackBase::undefQuality
+    );
+
+    trackCollection.push_back(track);
+  };
+
+  if (trackCollection.size() >= 2) {
+    std::vector<reco::TransientTrack> ttracks;
+    for (auto& trk : trackCollection) {
+      ttracks.push_back(theTransientTrackBuilder.build(trk));
+    }
+
+    KalmanVertexFitter kvf(true);
+    TransientVertex fittedVertex = kvf.vertex(ttracks);
+    if (fittedVertex.isValid()) {
+      GlobalPoint vtxPos = fittedVertex.position();
+      std::cout << "Fitted vertex: "
+                << vtxPos.x() << ", "
+                << vtxPos.y() << ", "
+                << vtxPos.z() << std::endl;
+    } else {
+      std::cout << "Vertex fit failed" << std::endl;
+    }
   }
 
+};
+
+
+void vertexing::beginJob() {
 }
+
+void vertexing::endJob() {
+}
+
+DEFINE_FWK_MODULE(vertexing);
