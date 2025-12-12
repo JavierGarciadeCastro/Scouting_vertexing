@@ -4,7 +4,7 @@ from TrackingTools.TransientTrack.TransientTrackBuilder_cfi import *
 process = cms.Process("DarkShowerAnalysis")
 from Configuration.AlCa.GlobalTag import GlobalTag
 process.load("FWCore.MessageService.MessageLogger_cfi")
-process.load("sct_vertex.Vertexing_Analyzer.vertexing_cfi")
+process.load("sct_vertex.Scouting_vertexing.vertexing_cfi")
 
 process.load("TrackingTools/TransientTrack/TransientTrackBuilder_cfi")
 process.load("Configuration.Geometry.GeometryRecoDB_cff")
