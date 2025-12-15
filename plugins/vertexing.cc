@@ -19,9 +19,17 @@
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "DataFormats/GeometryVector/interface/GlobalPoint.h"
+#include "DataFormats/Math/interface/LorentzVector.h"
+
 #include "RecoVertex/KalmanVertexFit/interface/KalmanVertexFitter.h"
 #include "RecoVertex/VertexPrimitives/interface/TransientVertex.h"
+
+#include "FWCore/ServiceRegistry/interface/Service.h"
+#include "CommonTools/UtilAlgos/interface/TFileService.h"
 #include "TMath.h"
+#include "TH1D.h"
+#include "TCanvas.h"
+#include "TFile.h"
 
 
 
@@ -40,6 +48,10 @@ class vertexing : public edm::one::EDAnalyzer<> {
     //edm::EDGetTokenT<std::vector<Run3ScoutingMuon>> muTokenScoutingNoVtx_;
     edm::EDGetTokenT<std::vector<Run3ScoutingVertex>> svTokenScouting_;
     edm::ESGetToken<TransientTrackBuilder, TransientTrackRecord> theTransientTrackBuilderToken_;
+    std::vector<float> lxy_Vertexing, lxy_NoVtx;
+    TH1D* h_lxyVertexing;
+    TH1D* h_lxyNoVtx;
+    double min_Pt, max_eta;
 };
 
 //Constructor
@@ -58,130 +70,218 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
   run = iEvent.id().run();
   lumi = iEvent.id().luminosityBlock();
   evtn = iEvent.id().event();
+  min_Pt = 2;
+  max_eta = 2.5;
+  double MuMass = 0.105658;
+  double MuMass2 = MuMass * MuMass;
+  double minInvMass = 0.5;
+  double maxInvMass = 30;
+  double minPtPair_ = 2;
+
   const auto& theTransientTrackBuilder = iSetup.getData(theTransientTrackBuilderToken_);
   edm::Handle<std::vector<Run3ScoutingMuon>> ScoutingmuonsVtx;
   //edm::Handle<std::vector<Run3ScoutingMuon>> ScoutingmuonsNoVtx;
   edm::Handle<std::vector<Run3ScoutingVertex>> ScoutingdisplacedVertices;
   
-
   iEvent.getByToken(muTokenScoutingVtx_, ScoutingmuonsVtx);
   //iEvent.getByToken(muTokenScoutingNoVtx_, ScoutingmuonsNoVtx);
   iEvent.getByToken(svTokenScouting_, ScoutingdisplacedVertices);
 
-  std::vector<reco::Track> trackCollection;
-
   const auto& muonCollectionVtx = *ScoutingmuonsVtx;
   unsigned int nMus = muonCollectionVtx.size();
+  //std::cout << "nMus: " << nMus << std::endl;
 
-  for (unsigned int iMu = 0; iMu < nMus; ++iMu) {
-    const auto& mu = muonCollectionVtx[iMu];
+  for (unsigned int iMu1 = 0; iMu1 < nMus; ++iMu1) {
+    const auto& mu1 = muonCollectionVtx[iMu1];
+    if (mu1.pt() < min_Pt) continue;
+    if (std::abs(mu1.eta()) > max_eta) continue;
 
-    reco::TrackBase::CovarianceMatrix cov = reco::TrackBase::CovarianceMatrix();
-    cov(0,0) = mu.trk_qoverpError()*mu.trk_qoverpError();
-    cov(1,1) = mu.trk_lambdaError()*mu.trk_lambdaError();
-    cov(2,2) = mu.trk_phiError()*mu.trk_phiError();
-    cov(3,3) = mu.trk_dxyError()*mu.trk_dxyError();
-    cov(4,4) = mu.trk_dszError()*mu.trk_dszError();
+    for (unsigned int iMu2 = iMu1 + 1; iMu2 < nMus; ++iMu2) {
+      const auto& mu2 = muonCollectionVtx[iMu2];
 
-    cov(0,1) = mu.trk_qoverp_lambda_cov();
-    cov(1,0) = mu.trk_qoverp_lambda_cov();
-    cov(0,2) = mu.trk_qoverp_phi_cov();
-    cov(2,0) = mu.trk_qoverp_phi_cov();
-    cov(0,3) = mu.trk_qoverp_dxy_cov();
-    cov(3,0) = mu.trk_qoverp_dxy_cov();
-    cov(0,4) = mu.trk_qoverp_dsz_cov();
-    cov(4,0) = mu.trk_qoverp_dsz_cov();
+      if (mu2.pt() < min_Pt) continue;
+      if (std::abs(mu2.eta()) > max_eta) continue;
+      if (mu1.charge() * mu2.charge() > 0) continue;
 
-    cov(1,2) = mu.trk_lambda_phi_cov();
-    cov(2,1) = mu.trk_lambda_phi_cov();
-    cov(1,3) = mu.trk_lambda_dxy_cov();
-    cov(3,1) = mu.trk_lambda_dxy_cov();
-    cov(1,4) = mu.trk_lambda_dsz_cov();
-    cov(4,1) = mu.trk_lambda_dsz_cov();
+      int charge1 = mu1.charge();
+      double chi2_1 = mu1.trk_chi2();
+      double ndof1 = mu1.trk_ndof();
 
-    cov(2,3) = mu.trk_phi_dxy_cov();
-    cov(3,2) = mu.trk_phi_dxy_cov();
-    cov(2,4) = mu.trk_phi_dsz_cov();
-    cov(4,2) = mu.trk_phi_dsz_cov();
+      double px1 = mu1.trk_pt() * std::cos(mu1.trk_phi());  
+      double py1 = mu1.trk_pt() * std::sin(mu1.trk_phi());  
+      double pz1 = mu1.trk_pt() * std::sinh(mu1.trk_eta()); 
 
-    cov(3,4) = mu.trk_dxy_dsz_cov();
-    cov(4,3) = mu.trk_dxy_dsz_cov();
+      int charge2 = mu2.charge();
+      double chi2_2 = mu2.trk_chi2();
+      double ndof2 = mu2.trk_ndof();
 
-    int charge = mu.charge();
-    double chi2 = mu.trk_chi2();
-    double ndof = mu.trk_ndof();
+      double px2 = mu2.trk_pt() * std::cos(mu2.trk_phi()); 
+      double py2 = mu2.trk_pt() * std::sin(mu2.trk_phi()); 
+      double pz2 = mu2.trk_pt() * std::sinh(mu2.trk_eta());
 
-    double px = mu.trk_pt() * std::cos(mu.trk_phi());   //Check this
-    double py = mu.trk_pt() * std::sin(mu.trk_phi());   //Check this
-    double pz = mu.trk_pt() * std::sinh(mu.trk_eta());  //Check this
+      reco::TrackBase::Vector momentum1(px1, py1, pz1);
+      reco::TrackBase::Vector momentum2(px2, py2, pz2);
 
-    reco::TrackBase::Vector momentum(px, py, pz);
+      double e1 = std::sqrt(px1*px1 + py1*py1 + pz1*pz1 + MuMass2);
+      double e2 = std::sqrt(px2*px2 + py2*py2 + pz2*pz2 + MuMass2);
 
-    reco::TrackBase::Point refPoint(
-      mu.trk_vx(),
-      mu.trk_vy(),
-      mu.trk_vz()
-    );
-    /*
-    std::cout << "Reference point (Vtx muons): "
-                << mu.trk_vx() << ", "
-                << mu.trk_vy() << ", "
-                << mu.trk_vz() << std::endl;
-    */
+      math::XYZTLorentzVector p1(px1, py1, pz1, e1);
+      math::XYZTLorentzVector p2(px2, py2, pz2, e2);
+      auto p = p1 + p2;
 
-    reco::Track track(chi2,
-      ndof,
-      refPoint,
-      momentum,
-      charge,
-      cov,
-      reco::TrackBase::undefAlgorithm,
-      reco::TrackBase::undefQuality
-    );
 
-    trackCollection.push_back(track);
-  };
+      if (p.pt() < minPtPair_) continue;
 
-  if (trackCollection.size() >= 2) {
-    std::vector<reco::TransientTrack> ttracks;
-    for (auto& trk : trackCollection) {
-      ttracks.push_back(theTransientTrackBuilder.build(trk));
-    }
+      double invmass = std::abs(p.mass());
+      if (invmass < minInvMass) continue;
+      if (invmass > maxInvMass) continue;
 
-    KalmanVertexFitter kvf(true);
-    TransientVertex fittedVertex = kvf.vertex(ttracks);
-    if (fittedVertex.isValid()) {
-      GlobalPoint vtxPos = fittedVertex.position();
-      std::cout << "Fitted vertex: "
-                << vtxPos.x() << ", "
-                << vtxPos.y() << ", "
-                << vtxPos.z() << std::endl;
-    } else {
-      std::cout << "Vertex fit failed" << std::endl;
+
+      reco::TrackBase::Point refPoint1(
+        mu1.trk_vx(),
+        mu1.trk_vy(),
+        mu1.trk_vz()
+      );
+
+      reco::TrackBase::CovarianceMatrix cov1 = reco::TrackBase::CovarianceMatrix();
+      cov1(0,0) = mu1.trk_qoverpError()*mu1.trk_qoverpError();
+      cov1(1,1) = mu1.trk_lambdaError()*mu1.trk_lambdaError();
+      cov1(2,2) = mu1.trk_phiError()*mu1.trk_phiError();
+      cov1(3,3) = mu1.trk_dxyError()*mu1.trk_dxyError();
+      cov1(4,4) = mu1.trk_dszError()*mu1.trk_dszError();
+
+      cov1(0,1) = mu1.trk_qoverp_lambda_cov();
+      cov1(1,0) = mu1.trk_qoverp_lambda_cov();
+      cov1(0,2) = mu1.trk_qoverp_phi_cov();
+      cov1(2,0) = mu1.trk_qoverp_phi_cov();
+      cov1(0,3) = mu1.trk_qoverp_dxy_cov();
+      cov1(3,0) = mu1.trk_qoverp_dxy_cov();
+      cov1(0,4) = mu1.trk_qoverp_dsz_cov();
+      cov1(4,0) = mu1.trk_qoverp_dsz_cov();
+
+      cov1(1,2) = mu1.trk_lambda_phi_cov();
+      cov1(2,1) = mu1.trk_lambda_phi_cov();
+      cov1(1,3) = mu1.trk_lambda_dxy_cov();
+      cov1(3,1) = mu1.trk_lambda_dxy_cov();
+      cov1(1,4) = mu1.trk_lambda_dsz_cov();
+      cov1(4,1) = mu1.trk_lambda_dsz_cov();
+
+      cov1(2,3) = mu1.trk_phi_dxy_cov();
+      cov1(3,2) = mu1.trk_phi_dxy_cov();
+      cov1(2,4) = mu1.trk_phi_dsz_cov();
+      cov1(4,2) = mu1.trk_phi_dsz_cov();
+
+      cov1(3,4) = mu1.trk_dxy_dsz_cov();
+      cov1(4,3) = mu1.trk_dxy_dsz_cov();
+
+      reco::Track track1(chi2_1,
+        ndof1,
+        refPoint1,
+        momentum1,
+        charge1,
+        cov1,
+        reco::TrackBase::undefAlgorithm,
+        reco::TrackBase::undefQuality
+      );
+
+      reco::TrackBase::CovarianceMatrix cov2 = reco::TrackBase::CovarianceMatrix();
+      cov2(0,0) = mu2.trk_qoverpError()*mu2.trk_qoverpError();
+      cov2(1,1) = mu2.trk_lambdaError()*mu2.trk_lambdaError();
+      cov2(2,2) = mu2.trk_phiError()*mu2.trk_phiError();
+      cov2(3,3) = mu2.trk_dxyError()*mu2.trk_dxyError();
+      cov2(4,4) = mu2.trk_dszError()*mu2.trk_dszError();
+
+      cov2(0,1) = mu2.trk_qoverp_lambda_cov();
+      cov2(1,0) = mu2.trk_qoverp_lambda_cov();
+      cov2(0,2) = mu2.trk_qoverp_phi_cov();
+      cov2(2,0) = mu2.trk_qoverp_phi_cov();
+      cov2(0,3) = mu2.trk_qoverp_dxy_cov();
+      cov2(3,0) = mu2.trk_qoverp_dxy_cov();
+      cov2(0,4) = mu2.trk_qoverp_dsz_cov();
+      cov2(4,0) = mu2.trk_qoverp_dsz_cov();
+
+      cov2(1,2) = mu2.trk_lambda_phi_cov();
+      cov2(2,1) = mu2.trk_lambda_phi_cov();
+      cov2(1,3) = mu2.trk_lambda_dxy_cov();
+      cov2(3,1) = mu2.trk_lambda_dxy_cov();
+      cov2(1,4) = mu2.trk_lambda_dsz_cov();
+      cov2(4,1) = mu2.trk_lambda_dsz_cov();
+
+      cov2(2,3) = mu2.trk_phi_dxy_cov();
+      cov2(3,2) = mu2.trk_phi_dxy_cov();
+      cov2(2,4) = mu2.trk_phi_dsz_cov();
+      cov2(4,2) = mu2.trk_phi_dsz_cov();
+
+      cov2(3,4) = mu2.trk_dxy_dsz_cov();
+      cov2(4,3) = mu2.trk_dxy_dsz_cov();
+
+      reco::TrackBase::Point refPoint2(
+        mu2.trk_vx(),
+        mu2.trk_vy(),
+        mu2.trk_vz()
+      );
+
+      reco::Track track2(chi2_2,
+        ndof2,
+        refPoint2,
+        momentum2,
+        charge2,
+        cov2,
+        reco::TrackBase::undefAlgorithm,
+        reco::TrackBase::undefQuality
+      );
+
+      std::vector<reco::TransientTrack> ttracks;
+      ttracks.push_back(theTransientTrackBuilder.build(track1));
+      ttracks.push_back(theTransientTrackBuilder.build(track2));
+
+      KalmanVertexFitter kvf(true);
+      TransientVertex fittedVertex = kvf.vertex(ttracks);
+
+      if (fittedVertex.isValid() && fittedVertex.normalisedChiSquared() < 5) {
+        GlobalPoint vtxPos = fittedVertex.position();
+        double lxy = std::hypot(vtxPos.x(), vtxPos.y());
+        lxy_Vertexing.push_back(lxy);
+        h_lxyVertexing->Fill(lxy);
+
+        //std::cout << "Vtx collection lxy: " << lxy << std::endl;
+
+      } 
+      //else {
+      //  std::cout << "Vertex fit failed" << std::endl;
+      //}
+        
     }
   }
-
 
   const auto& sct_svCollection = *ScoutingdisplacedVertices;
   unsigned int nSVs = sct_svCollection.size();
   for (unsigned int iSV = 0; iSV < nSVs; ++iSV) {
     const auto& sv = (*ScoutingdisplacedVertices)[iSV];
-    //double vertex_prob = TMath::Prob(sv.chi2(), sv.ndof());
-    //if (vertex_prob > 0.2){
-    std::cout << "NoVtx collection SV reconstruction: "
-                << sv.x() << ", "
-                << sv.y() << ", "
-                << sv.z() << std::endl;
-    //};
+    double lxy_reco = std::hypot(sv.x(), sv.y());
+    lxy_NoVtx.push_back(lxy_reco);
+    h_lxyNoVtx->Fill(lxy_reco);
+    //std::cout << "NoVtx collection SV lxy: " << lxy_reco << std::endl;
   };
-
 };
 
 
 void vertexing::beginJob() {
+  edm::Service<TFileService> fs;
+  h_lxyVertexing = new TH1D("h_lxyVertexing", "Lxy from Vertexing;L_{xy} [cm];Entries", 100, 0, 40);
+  h_lxyNoVtx    = new TH1D("h_lxyNoVtx",    "Lxy from NoVtx;L_{xy} [cm];Entries", 100, 0, 40);
 }
 
 void vertexing::endJob() {
+    TCanvas* c1 = new TCanvas("c1", "Lxy Comparison", 800, 600);
+    h_lxyVertexing->SetLineColor(kRed);
+    h_lxyNoVtx->SetLineColor(kBlue);
+
+    h_lxyVertexing->Draw("HIST");
+    h_lxyNoVtx->Draw("HIST SAME");
+
+    c1->BuildLegend();
+    c1->SaveAs("lxy_comparison_after_cuts.png");
 }
 
 DEFINE_FWK_MODULE(vertexing);
