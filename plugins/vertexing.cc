@@ -10,6 +10,7 @@
 #include "FWCore/Framework/interface/MakerMacros.h"
 
 #include "DataFormats/Scouting/interface/Run3ScoutingMuon.h"
+#include "DataFormats/Scouting/interface/Run3ScoutingVertex.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackBase.h"
 #include "TrackingTools/TransientTrack/interface/TransientTrackBuilder.h"
@@ -20,6 +21,7 @@
 #include "DataFormats/GeometryVector/interface/GlobalPoint.h"
 #include "RecoVertex/KalmanVertexFit/interface/KalmanVertexFitter.h"
 #include "RecoVertex/VertexPrimitives/interface/TransientVertex.h"
+#include "TMath.h"
 
 
 
@@ -35,12 +37,16 @@ class vertexing : public edm::one::EDAnalyzer<> {
   private:
     unsigned int run, lumi, evtn;
     edm::EDGetTokenT<std::vector<Run3ScoutingMuon>> muTokenScoutingVtx_;
+    //edm::EDGetTokenT<std::vector<Run3ScoutingMuon>> muTokenScoutingNoVtx_;
+    edm::EDGetTokenT<std::vector<Run3ScoutingVertex>> svTokenScouting_;
     edm::ESGetToken<TransientTrackBuilder, TransientTrackRecord> theTransientTrackBuilderToken_;
 };
 
 //Constructor
 vertexing::vertexing(const edm::ParameterSet& iConfig) :
   muTokenScoutingVtx_{consumes<std::vector<Run3ScoutingMuon>>(iConfig.getParameter<edm::InputTag>("ScoutingmuonsVtx"))},
+  //muTokenScoutingNoVtx_{consumes<std::vector<Run3ScoutingMuon>>(iConfig.getParameter<edm::InputTag>("ScoutingmuonsNoVtx"))},
+  svTokenScouting_{consumes<std::vector<Run3ScoutingVertex>>(iConfig.getParameter<edm::InputTag>("hltScoutingMuonPacker_displacedVtx"))},
   theTransientTrackBuilderToken_{esConsumes(edm::ESInputTag("", "TransientTrackBuilder"))}
   {}
 
@@ -54,7 +60,13 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
   evtn = iEvent.id().event();
   const auto& theTransientTrackBuilder = iSetup.getData(theTransientTrackBuilderToken_);
   edm::Handle<std::vector<Run3ScoutingMuon>> ScoutingmuonsVtx;
+  //edm::Handle<std::vector<Run3ScoutingMuon>> ScoutingmuonsNoVtx;
+  edm::Handle<std::vector<Run3ScoutingVertex>> ScoutingdisplacedVertices;
+  
+
   iEvent.getByToken(muTokenScoutingVtx_, ScoutingmuonsVtx);
+  //iEvent.getByToken(muTokenScoutingNoVtx_, ScoutingmuonsNoVtx);
+  iEvent.getByToken(svTokenScouting_, ScoutingdisplacedVertices);
 
   std::vector<reco::Track> trackCollection;
 
@@ -104,12 +116,22 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
     double pz = mu.trk_pt() * std::sinh(mu.trk_eta());  //Check this
 
     reco::TrackBase::Vector momentum(px, py, pz);
-    reco::TrackBase::Point vtx(0., 0., 0.);
 
-    reco::Track track(
-      chi2,
+    reco::TrackBase::Point refPoint(
+      mu.trk_vx(),
+      mu.trk_vy(),
+      mu.trk_vz()
+    );
+    /*
+    std::cout << "Reference point (Vtx muons): "
+                << mu.trk_vx() << ", "
+                << mu.trk_vy() << ", "
+                << mu.trk_vz() << std::endl;
+    */
+
+    reco::Track track(chi2,
       ndof,
-      vtx,
+      refPoint,
       momentum,
       charge,
       cov,
@@ -138,6 +160,20 @@ void vertexing::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
       std::cout << "Vertex fit failed" << std::endl;
     }
   }
+
+
+  const auto& sct_svCollection = *ScoutingdisplacedVertices;
+  unsigned int nSVs = sct_svCollection.size();
+  for (unsigned int iSV = 0; iSV < nSVs; ++iSV) {
+    const auto& sv = (*ScoutingdisplacedVertices)[iSV];
+    //double vertex_prob = TMath::Prob(sv.chi2(), sv.ndof());
+    //if (vertex_prob > 0.2){
+    std::cout << "NoVtx collection SV reconstruction: "
+                << sv.x() << ", "
+                << sv.y() << ", "
+                << sv.z() << std::endl;
+    //};
+  };
 
 };
 
